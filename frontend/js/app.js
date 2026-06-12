@@ -1,82 +1,70 @@
 /* ================================================================== */
-/*  app.js — Main App Component with auth boot sequence                */
+/*  app.js — Root App Component + React Mount                         */
 /* ================================================================== */
 
-var React_Fragment = React.Fragment;
-var React_createElement = React.createElement;
-
 window.App = function() {
-  var app = useApp();
-  var theme = useTheme();
+    var app = useApp();
 
-  // Show loading screen while authenticating
-  if (app.isLoading || !app.authChecked) {
-    return React_createElement('div', { className: 'min-h-screen flex items-center justify-center gradient-bg' },
-      React_createElement('div', { className: 'text-center' },
-        React_createElement('div', { className: 'w-16 h-16 gradient-bg rounded-2xl flex items-center justify-center mx-auto mb-4' },
-          React_createElement('i', { className: 'fas fa-spinner text-2xl text-white animate-spin' })
-        ),
-        React_createElement('p', { className: 'text-gray-600 dark:text-gray-400' }, 'Loading InvoiceFlow...')
-      )
-    );
-  }
+    /* Block all UI until auth check completes */
+    if (app.isLoading || !app.authCheckDone) {
+        return React.createElement('div', { className: 'fixed inset-0 z-[10001] flex items-center justify-center bg-white dark:bg-gray-900' },
+            React.createElement('div', { className: 'flex flex-col items-center gap-4' },
+                React.createElement('span', { className: 'spinner', style: { borderColor: 'rgba(0,0,0,0.12)', borderTopColor: 'var(--primary)', width: '40px', height: '40px' } }),
+                React.createElement('p', { className: 'text-gray-600 dark:text-gray-400 font-medium' }, 'Loading...')
+            )
+        );
+    }
 
-  // Render appropriate page based on auth status and current section
-  var renderPage = function() {
-    // If not authenticated, only show landing, login, or signup
+    /* Conditional rendering: Authenticated vs Unauthenticated */
     if (!app.isAuthenticated) {
-      if (app.section === 'login') {
-        return React_createElement(LoginPage);
-      } else if (app.section === 'signup') {
-        return React_createElement(SignupPage);
-      }
-      // Default to landing for unauthenticated users
-      return React_createElement(LandingPage);
+        /* Unauthenticated view — show landing, login, or signup only */
+        return React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(Navbar),
+            React.createElement(DarkModeToggle),
+            app.section === 'landing' && React.createElement(LandingPage),
+            app.section === 'login' && React.createElement(LoginPage),
+            app.section === 'signup' && React.createElement(SignupPage),
+            React.createElement(Toast),
+            React.createElement('div', { id: 'pdfBusy', className: 'fixed inset-0 z-[10000] hidden items-center justify-center bg-black/40 backdrop-blur-sm' },
+                React.createElement('div', { className: 'bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 flex items-center gap-4' },
+                    React.createElement('span', { className: 'spinner', style: { borderColor: 'rgba(0,0,0,0.12)', borderTopColor: 'var(--primary)' } }),
+                    React.createElement('div', null,
+                        React.createElement('p', { className: 'font-semibold text-gray-900 dark:text-white' }, 'Generating PDF...'),
+                        React.createElement('p', { className: 'text-xs text-gray-500 dark:text-gray-400' }, 'Please keep this tab open.')
+                    )
+                )
+            )
+        );
     }
 
-    // If authenticated, show dashboard or other pages
-    if (app.section === 'dashboard') {
-      return React_createElement(DashboardPage);
-    }
-    
-    // Fallback to landing
-    return React_createElement(LandingPage);
-  };
-
-  return React_createElement(React_Fragment, null,
-    // Toast notification
-    app.toast && React_createElement('div', {
-      className: 'fixed bottom-4 right-4 z-50 animate-slide-up'
-    },
-      React_createElement('div', {
-        className: 'px-6 py-3 rounded-lg shadow-lg font-medium ' +
-          (app.toast.type === 'error' ? 'bg-red-500 text-white' : '') +
-          (app.toast.type === 'warning' ? 'bg-yellow-500 text-white' : '') +
-          (app.toast.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white')
-      },
-        React_createElement('div', { className: 'flex items-center gap-2' },
-          React_createElement('i', {
-            className: 'fas ' +
-              (app.toast.type === 'error' ? 'fa-exclamation-circle' : '') +
-              (app.toast.type === 'warning' ? 'fa-triangle-exclamation' : '') +
-              (app.toast.type === 'success' ? 'fa-check-circle' : 'fa-info-circle')
-          }),
-          React_createElement('span', null, app.toast.message)
+    /* Authenticated view — show navbar + dashboard only */
+    return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(Navbar),
+        React.createElement(DarkModeToggle),
+        app.section === 'dashboard' && React.createElement(DashboardPage),
+        React.createElement(Toast),
+        React.createElement('div', { id: 'pdfBusy', className: 'fixed inset-0 z-[10000] hidden items-center justify-center bg-black/40 backdrop-blur-sm' },
+            React.createElement('div', { className: 'bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 flex items-center gap-4' },
+                React.createElement('span', { className: 'spinner', style: { borderColor: 'rgba(0,0,0,0.12)', borderTopColor: 'var(--primary)' } }),
+                React.createElement('div', null,
+                    React.createElement('p', { className: 'font-semibold text-gray-900 dark:text-white' }, 'Generating PDF...'),
+                    React.createElement('p', { className: 'text-xs text-gray-500 dark:text-gray-400' }, 'Please keep this tab open.')
+                )
+            )
         )
-      )
-    ),
-
-    // Main page content
-    renderPage()
-  );
+    );
 };
 
-// Root render
-ReactDOM.render(
-  React_createElement(ThemeProvider, null,
-    React_createElement(AppProvider, null,
-      React_createElement(App)
+/* ---- Mount React App ---- */
+var root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+    React.createElement(ThemeProvider, null,
+        React.createElement(AppProvider, null,
+            React.createElement(App)
+        )
     )
-  ),
-  document.getElementById('root')
 );
