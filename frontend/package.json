@@ -1,0 +1,13 @@
+{
+  "name": "invoiceflow-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "InvoiceFlow — Smart Invoice Generator & Payment Tracker (Frontend)",
+  "scripts": {
+    "dev": "npx serve . -l 5173 --cors",
+    "start": "npx serve . -l 5173 --cors",
+    "preview": "open index.html || xdg-open index.html"
+  },
+  "keywords": ["invoice", "saas", "react", "tailwindcss"],
+  "license": "MIT"
+}

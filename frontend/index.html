@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <title>InvoiceFlow - Smart Invoice Generator & Payment Tracker</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- PDF Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+    <!-- React 18 -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Babel (JSX Transform) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- App Styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-gray-50 transition-colors duration-300">
+
+    <!-- React Root -->
+    <div id="root"></div>
+
+    <!-- PDF Render Surface (hidden, used by PDF generator) -->
+    <div id="pdfMount" aria-hidden="true">
+        <div id="pdfInvoice" class="pdf-page"></div>
+    </div>
+
+    <!-- Load App Scripts (order matters) -->
+    <script type="text/babel" src="js/utils.js"></script>
+    <script type="text/babel" src="js/api.js"></script>
+    <script type="text/babel" src="js/contexts.js"></script>
+    <script type="text/babel" src="js/components.js"></script>
+    <script type="text/babel" src="js/pages/Landing.js"></script>
+    <script type="text/babel" src="js/pages/Auth.js"></script>
+    <script type="text/babel" src="js/pages/Dashboard.js"></script>
+    <script type="text/babel" src="js/app.js"></script>
+</body>
+</html>
