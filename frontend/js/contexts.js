@@ -35,10 +35,8 @@ window.useTheme = function() { return useContext(ThemeCtx); };
 window.AppCtx = createContext();
 
 window.AppProvider = function(props) {
-    var _s = useState(function() {
-        var saved = window.Storage.load();
-        return saved || { user: null, clients: [], invoices: [], settings: {} };
-    });
+    var emptyState = { user: null, clients: [], invoices: [], settings: {} };
+    var _s = useState(emptyState);
     var state = _s[0], setState = _s[1];
 
     var _sec = useState('landing');
@@ -53,26 +51,25 @@ window.AppProvider = function(props) {
     var _ses = useState({ token: null, expiry: null });
     var session = _ses[0], setSession = _ses[1];
 
-    var timerRef = useRef(null);
+    var _init = useState(true);
+    var initializing = _init[0], setInitializing = _init[1];
 
-    var persist = useCallback(function(s) {
-        setState(s);
-        window.Storage.save(s);
-    }, []);
+    var timerRef = useRef(null);
 
     var showToast = useCallback(function(message, type) {
         setToast({ message: message, type: type || 'success' });
         setTimeout(function() { setToast(null); }, 4000);
     }, []);
 
-    var createSession = useCallback(function() {
-        var token = Security.csrfToken();
+    var createSession = useCallback(function(token) {
+        Backend.setToken(token || null);
         var expiry = Date.now() + 30 * 60 * 1000;
-        setSession({ token: token, expiry: expiry });
+        setSession({ token: token || 'cookie', expiry: expiry });
         return token;
     }, []);
 
     var destroySession = useCallback(function() {
+        Backend.setToken(null);
         setSession({ token: null, expiry: null });
     }, []);
 
@@ -86,7 +83,63 @@ window.AppProvider = function(props) {
         return session.token && Date.now() < session.expiry;
     }, [session]);
 
-    // Refresh session on user activity
+    var setAuthState = useCallback(function(user, token) {
+        var normalized = user ? Object.assign({}, user, { business: user.businessName || user.business || user.name }) : null;
+        createSession(token);
+        setState(function(prev) {
+            return Object.assign({}, prev, {
+                user: normalized,
+                settings: Object.assign({}, prev.settings || {}, { business: normalized.business, email: normalized.email })
+            });
+        });
+    }, [createSession]);
+
+    var clearAuthState = useCallback(function() {
+        destroySession();
+        setState(emptyState);
+    }, [destroySession]);
+
+    var loadWorkspace = useCallback(async function(userOverride) {
+        var user = userOverride || state.user;
+        if (!user) return;
+        var results = await Promise.all([Backend.clients.list(), Backend.invoices.list(), Backend.settings.get()]);
+        var settings = Object.assign({}, results[2].settings || {}, {
+            business: user.businessName || user.business || user.name,
+            email: user.email
+        });
+        setState({
+            user: Object.assign({}, user, { business: settings.business }),
+            clients: results[0].clients || [],
+            invoices: results[1].invoices || [],
+            settings: settings
+        });
+    }, [state.user]);
+
+    var logout = useCallback(async function() {
+        try { await Backend.auth.logout(); } catch (e) { }
+        clearAuthState();
+        setSection('landing');
+    }, [clearAuthState]);
+
+    useEffect(function() {
+        var cancelled = false;
+        (async function() {
+            try {
+                var res = await Backend.auth.me();
+                if (cancelled || !res.user) return;
+                setAuthState(res.user, res.token || null);
+                await loadWorkspace(res.user);
+                if (!cancelled) setSection('dashboard');
+            } catch (e) {
+                clearAuthState();
+            } finally {
+                if (!cancelled) setInitializing(false);
+            }
+        })();
+        return function() { cancelled = true; };
+    }, []);
+
+    // Refresh in-memory session expiry on user activity. The real auth source is the JWT/cookie issued by the API.
     useEffect(function() {
         var handler = function() { refreshSession(); };
         document.addEventListener('click', handler);
@@ -97,20 +150,18 @@ window.AppProvider = function(props) {
         };
     }, [refreshSession]);
 
-    // Auto-logout on session expiry
+    // Auto-logout UI when the in-memory session timer expires.
     useEffect(function() {
         if (timerRef.current) clearInterval(timerRef.current);
         if (!session.token) return;
         timerRef.current = setInterval(function() {
             if (Date.now() >= session.expiry) {
-                destroySession();
-                persist({ user: null, clients: [], invoices: [], settings: {} });
-                setSection('landing');
+                logout();
                 showToast('Session expired. Please login again.', 'warning');
             }
         }, 1000);
         return function() { clearInterval(timerRef.current); };
-    }, [session, destroySession, persist, showToast]);
+    }, [session, logout, showToast]);
 
     var navigate = useCallback(function(sec, tab) {
         if (sec === 'dashboard' && !session.token) {
@@ -126,14 +177,16 @@ window.AppProvider = function(props) {
     var value = useMemo(function() {
         return {
             user: state.user, clients: state.clients, invoices: state.invoices, settings: state.settings,
-            setState: persist, section: section, setSection: navigate,
+            setState: setState, section: section, setSection: navigate,
             dashTab: dashTab, setDashTab: setDashTab,
             toast: toast, showToast: showToast,
             session: session, createSession: createSession,
             destroySession: destroySession, isValidSession: isValidSession,
-            refreshSession: refreshSession
+            refreshSession: refreshSession, setAuthState: setAuthState,
+            clearAuthState: clearAuthState, loadWorkspace: loadWorkspace,
+            logout: logout, initializing: initializing
         };
-    }, [state, persist, section, navigate, dashTab, toast, showToast, session, createSession, destroySession, isValidSession, refreshSession]);
+    }, [state, setState, section, navigate, dashTab, toast, showToast, session, createSession, destroySession, isValidSession, refreshSession, setAuthState, clearAuthState, loadWorkspace, logout, initializing]);
 
     return React.createElement(AppCtx.Provider, { value: value }, props.children);
 };

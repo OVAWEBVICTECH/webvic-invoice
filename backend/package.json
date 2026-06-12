@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "prisma": "prisma",
     "migrate": "prisma migrate dev",
-    "studio": "prisma studio"
+    "studio": "prisma studio",
+    "smoke:auth-flow": "node scripts/auth-flow-smoke.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

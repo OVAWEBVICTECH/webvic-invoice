@@ -1,9 +1,9 @@
-import { getSessionCookie, verifySession } from '../lib/jwt.js';
+import { getSessionToken, verifySession } from '../lib/jwt.js';
 import { prisma } from '../lib/prisma.js';
 
 export async function requireAuth(req, res, next) {
   try {
-    const token = getSessionCookie(req);
+    const token = getSessionToken(req);
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
     const payload = verifySession(token);

@@ -18,28 +18,14 @@ window.LoginPage = function() {
         if (!Security.rateLimiter.check(em)) { setWarning('Too many attempts. Try again in ' + Math.ceil(Security.rateLimiter.remaining(em) / 60) + ' min.'); return; }
         setLoading(true);
         try {
-            if (Backend.enabled) {
-                var res = await Backend.request('/api/auth/login', { method: 'POST', body: { email: em, password: password } });
-                var u = res.user;
-                app.setState({ user: { id: u.id, name: u.name, email: u.email, business: u.businessName || u.name, createdAt: new Date().toISOString() }, clients: app.clients, invoices: app.invoices, settings: { business: u.businessName || u.name, email: u.email } });
-                app.createSession();
-                app.setSection('dashboard', 'overview');
-                app.showToast('Welcome back!', 'success');
-            } else {
-                await new Promise(function(r) { setTimeout(r, 350); });
-                if (app.user && app.user.email === em) {
-                    var ok = true;
-                    if (app.user.passwordRecord) { try { ok = await Security.password.verify(password, app.user.passwordRecord); } catch (err) { ok = false; } }
-                    if (ok) {
-                        Security.rateLimiter.reset(em); setWarning(''); app.createSession();
-                        app.setSection('dashboard', 'overview'); app.showToast('Welcome back!', 'success');
-                    } else {
-                        Security.rateLimiter.inc(em);
-                        var rem = 5 - (Security.rateLimiter.attempts[em] ? Security.rateLimiter.attempts[em].count : 0);
-                        setWarning('Invalid credentials. ' + rem + ' attempts remaining.');
-                    }
-                } else { Security.rateLimiter.inc(em); setWarning('Invalid credentials.'); }
-            }
+            var res = await Backend.auth.login({ email: em, password: password });
+            var u = res.user;
+            app.setAuthState(u, res.token);
+            await app.loadWorkspace(Object.assign({}, u, { business: u.businessName || u.name }));
+            Security.rateLimiter.reset(em);
+            setWarning('');
+            app.setSection('dashboard', 'overview');
+            app.showToast('Welcome back!', 'success');
         } catch (err) { Security.rateLimiter.inc(em); setWarning(err.message || 'Login failed'); app.showToast(err.message || 'Login failed', 'error'); }
         finally { setLoading(false); }
     };
@@ -97,16 +83,11 @@ window.SignupPage = function() {
         if (Security.strength(password) < 3) { app.showToast('Please choose a stronger password', 'error'); return; }
         setLoading(true);
         try {
-            if (Backend.enabled) {
-                var res = await Backend.request('/api/auth/signup', { method: 'POST', body: { name: nm, email: em, password: password, businessName: biz } });
-                var u = res.user;
-                app.setState({ user: { id: u.id, name: u.name, email: u.email, business: u.businessName || u.name, createdAt: new Date().toISOString() }, clients: [], invoices: [], settings: { business: u.businessName || u.name, email: u.email, address: '', paymentTerms: 30 } });
-            } else {
-                await new Promise(function(r) { setTimeout(r, 350); });
-                var rec = null; try { rec = await Security.password.hash(password); } catch (err) { }
-                app.setState({ user: { id: Security.secureId('user'), name: nm, email: em, passwordRecord: rec, business: biz, createdAt: new Date().toISOString() }, clients: [], invoices: [], settings: { business: biz, email: em, address: '', paymentTerms: 30 } });
-            }
-            app.createSession(); app.setSection('dashboard', 'overview'); app.showToast('Welcome to InvoiceFlow!', 'success');
+            var res = await Backend.auth.signup({ name: nm, email: em, password: password, businessName: biz });
+            var u = res.user;
+            app.setAuthState(u, res.token);
+            await app.loadWorkspace(Object.assign({}, u, { business: u.businessName || u.name }));
+            app.setSection('dashboard', 'overview'); app.showToast('Welcome to InvoiceFlow!', 'success');
         } catch (err) { app.showToast(err.message || 'Signup failed', 'error'); } finally { setLoading(false); }
     };
 

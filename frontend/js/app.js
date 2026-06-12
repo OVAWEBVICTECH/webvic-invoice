@@ -5,6 +5,10 @@
 window.App = function() {
     var app = useApp();
 
+    if (app.initializing) {
+        return <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900"><span className="spinner mr-3"></span><span className="text-gray-600 dark:text-gray-300">Loading InvoiceFlow...</span></div>;
+    }
+
     return <>
         <Navbar />
         <DarkModeToggle />
