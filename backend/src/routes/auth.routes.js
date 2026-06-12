@@ -1,114 +1,190 @@
 import { Router } from 'express';
+import { hash, verify } from 'argon2';
 import { z } from 'zod';
-import argon2 from 'argon2';
 import { prisma } from '../lib/prisma.js';
-import { clearSessionCookie, setSessionCookie, signSession } from '../lib/jwt.js';
+import { 
+  signAccessToken, signRefreshToken, 
+  setAccessCookie, setRefreshCookie, 
+  clearAccessCookie, clearRefreshCookie,
+  verifyRefreshToken, getRefreshCookie
+} from '../lib/jwt.js';
 import { requireAuth } from '../middleware/auth.js';
 
-export const authRouter = Router();
+const router = Router();
 
-const signupSchema = z.object({
-  name: z.string().trim().min(2).max(100),
-  email: z.string().trim().toLowerCase().email().max(254),
-  password: z.string().min(8).max(200),
-  businessName: z.string().trim().min(2).max(100).optional()
+const SignupSchema = z.object({
+  name: z.string().min(2).max(100),
+  email: z.string().email(),
+  password: z.string().min(8).max(128),
+  businessName: z.string().max(100).optional()
 });
 
-const loginSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(254),
-  password: z.string().min(1).max(200)
+const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1)
 });
 
-authRouter.post('/signup', async (req, res, next) => {
+// POST /api/auth/signup
+router.post('/signup', async (req, res, next) => {
   try {
-    const parsed = signupSchema.parse(req.body);
+    const { name, email, password, businessName } = SignupSchema.parse(req.body);
 
-    const existing = await prisma.user.findUnique({ where: { email: parsed.email } });
-    if (existing) return res.status(409).json({ error: 'Email already in use' });
+    // Check if user exists
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
 
-    const passwordHash = await argon2.hash(parsed.password, { type: argon2.argon2id });
+    // Hash password with Argon2
+    const passwordHash = await hash(password);
 
+    // Create user
     const user = await prisma.user.create({
       data: {
-        email: parsed.email,
-        name: parsed.name,
-        businessName: parsed.businessName || parsed.name,
-        passwordHash,
-        settings: {
-          create: {
-            paymentTerms: 30,
-            address: ''
-          }
-        }
-      },
-      select: { id: true, email: true, name: true, businessName: true }
+        name,
+        email,
+        businessName: businessName || name,
+        passwordHash
+      }
     });
 
-    const token = signSession(user);
-    setSessionCookie(res, token);
+    // Create default settings
+    await prisma.settings.create({
+      data: {
+        userId: user.id,
+        address: '',
+        paymentTerms: 30
+      }
+    });
 
-    res.status(201).json({ user });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    next(e);
+    // Issue tokens
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
+
+    setAccessCookie(res, accessToken);
+    setRefreshCookie(res, refreshToken);
+
+    res.status(201).json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        businessName: user.businessName
+      }
+    });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', issues: err.issues });
+    }
+    next(err);
   }
 });
 
-authRouter.post('/login', async (req, res, next) => {
+// POST /api/auth/login
+router.post('/login', async (req, res, next) => {
   try {
-    const parsed = loginSchema.parse(req.body);
+    const { email, password } = LoginSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({ where: { email: parsed.email } });
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
-    const ok = await argon2.verify(user.passwordHash, parsed.password);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    // Verify password with Argon2
+    let valid = false;
+    try {
+      valid = await verify(user.passwordHash, password);
+    } catch (e) {
+      // Invalid hash format
+      valid = false;
+    }
 
-    const token = signSession({ id: user.id, email: user.email });
-    setSessionCookie(res, token);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
-    res.json({ user: { id: user.id, email: user.email, name: user.name, businessName: user.businessName } });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    next(e);
+    // Issue tokens
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
+
+    setAccessCookie(res, accessToken);
+    setRefreshCookie(res, refreshToken);
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        businessName: user.businessName
+      }
+    });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input' });
+    }
+    next(err);
   }
 });
 
-authRouter.post('/logout', (req, res) => {
-  clearSessionCookie(res);
+// POST /api/auth/logout
+router.post('/logout', (req, res) => {
+  clearAccessCookie(res);
+  clearRefreshCookie(res);
   res.json({ ok: true });
 });
 
-authRouter.get('/me', requireAuth, async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select: { id: true, email: true, name: true, businessName: true, createdAt: true }
-  });
-  res.json({ user });
-});
-
-const profileSchema = z.object({
-  name: z.string().trim().min(2).max(100).optional(),
-  businessName: z.string().trim().min(2).max(100).optional()
-});
-
-// Update profile (name/businessName)
-authRouter.put('/profile', requireAuth, async (req, res, next) => {
+// POST /api/auth/refresh
+router.post('/refresh', async (req, res, next) => {
   try {
-    const parsed = profileSchema.parse(req.body || {});
+    const refreshToken = getRefreshCookie(req);
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-    const user = await prisma.user.update({
-      where: { id: req.user.id },
-      data: {
-        ...(parsed.name !== undefined ? { name: parsed.name } : {}),
-        ...(parsed.businessName !== undefined ? { businessName: parsed.businessName } : {})
-      },
-      select: { id: true, email: true, name: true, businessName: true }
-    });
+    const payload = verifyRefreshToken(refreshToken);
+    if (!payload?.sub) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-    res.json({ user });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    next(e);
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const accessToken = signAccessToken(user);
+    setAccessCookie(res, accessToken);
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
   }
 });
+
+// GET /api/auth/me
+router.get('/me', requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { settings: true }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        businessName: user.businessName,
+        createdAt: user.createdAt
+      },
+      settings: user.settings || {}
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+export const authRouter = router;

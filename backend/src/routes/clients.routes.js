@@ -3,77 +3,101 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 
-export const clientsRouter = Router();
-clientsRouter.use(requireAuth);
+const router = Router();
 
-const createClientSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  email: z.string().trim().toLowerCase().email().max(254),
-  company: z.string().trim().max(100).optional().nullable(),
-  phone: z.string().trim().max(20).optional().nullable()
+const ClientSchema = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  company: z.string().max(100).optional(),
+  phone: z.string().max(20).optional()
 });
 
-clientsRouter.get('/', async (req, res) => {
-  const clients = await prisma.client.findMany({
-    where: { userId: req.user.id },
-    orderBy: { createdAt: 'desc' }
-  });
-  res.json({ clients });
-});
-
-clientsRouter.post('/', async (req, res, next) => {
+// GET /api/clients
+router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const parsed = createClientSchema.parse(req.body);
+    const clients = await prisma.client.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ clients });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/clients
+router.post('/', requireAuth, async (req, res, next) => {
+  try {
+    const data = ClientSchema.parse(req.body);
+    
+    // Check uniqueness
+    const existing = await prisma.client.findUnique({
+      where: { userId_email: { userId: req.user.id, email: data.email } }
+    });
+    
+    if (existing) {
+      return res.status(409).json({ error: 'Client email already exists' });
+    }
+
     const client = await prisma.client.create({
       data: {
-        userId: req.user.id,
-        name: parsed.name,
-        email: parsed.email,
-        company: parsed.company || null,
-        phone: parsed.phone || null
+        ...data,
+        userId: req.user.id
       }
     });
+
     res.status(201).json({ client });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    // Prisma unique constraint
-    if (e?.code === 'P2002') return res.status(409).json({ error: 'Client email already exists' });
-    next(e);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', issues: err.issues });
+    }
+    next(err);
   }
 });
 
-clientsRouter.put('/:id', async (req, res, next) => {
+// PUT /api/clients/:id
+router.put('/:id', requireAuth, async (req, res, next) => {
   try {
-    const id = z.string().uuid().parse(req.params.id);
-    const parsed = createClientSchema.partial().parse(req.body);
+    const data = ClientSchema.parse(req.body);
 
-    const client = await prisma.client.update({
-      where: { id, userId: req.user.id },
-      data: {
-        ...(parsed.name !== undefined ? { name: parsed.name } : {}),
-        ...(parsed.email !== undefined ? { email: parsed.email } : {}),
-        ...(parsed.company !== undefined ? { company: parsed.company || null } : {}),
-        ...(parsed.phone !== undefined ? { phone: parsed.phone || null } : {})
-      }
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
     });
 
-    res.json({ client });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    if (e?.code === 'P2025') return res.status(404).json({ error: 'Not found' });
-    if (e?.code === 'P2002') return res.status(409).json({ error: 'Client email already exists' });
-    next(e);
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    const updated = await prisma.client.update({
+      where: { id: req.params.id },
+      data
+    });
+
+    res.json({ client: updated });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input' });
+    }
+    next(err);
   }
 });
 
-clientsRouter.delete('/:id', async (req, res, next) => {
+// DELETE /api/clients/:id
+router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const id = z.string().uuid().parse(req.params.id);
-    await prisma.client.delete({ where: { id, userId: req.user.id } });
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    await prisma.client.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    if (e?.code === 'P2025') return res.status(404).json({ error: 'Not found' });
-    next(e);
+  } catch (err) {
+    next(err);
   }
 });
+
+export const clientsRouter = router;
