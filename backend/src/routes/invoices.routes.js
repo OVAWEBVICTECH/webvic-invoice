@@ -2,125 +2,158 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import { Decimal } from '@prisma/client/runtime/library.js';
 
-export const invoicesRouter = Router();
-invoicesRouter.use(requireAuth);
+const router = Router();
 
-const itemSchema = z.object({
-  description: z.string().trim().min(1).max(200),
-  qty: z.number().int().min(1).max(9999),
-  price: z.number().min(0).max(999999.99)
+const InvoiceItemSchema = z.object({
+  description: z.string().min(1).max(500),
+  qty: z.number().int().positive(),
+  price: z.number().positive()
 });
 
-const createInvoiceSchema = z.object({
-  number: z.string().trim().min(1).max(40),
+const InvoiceSchema = z.object({
   clientId: z.string().uuid(),
-  dueDate: z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
-  notes: z.string().trim().max(500).optional().nullable(),
-  items: z.array(itemSchema).min(1).max(200)
+  number: z.string().min(1).max(50),
+  dueDate: z.string().datetime(),
+  notes: z.string().max(2000).optional(),
+  items: z.array(InvoiceItemSchema).min(1)
 });
 
-function parseDueDate(input) {
-  // Accept YYYY-MM-DD or ISO
-  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return new Date(input + 'T00:00:00.000Z');
-  return new Date(input);
-}
-
-invoicesRouter.get('/', async (req, res) => {
-  const invoices = await prisma.invoice.findMany({
-    where: { userId: req.user.id },
-    orderBy: { createdAt: 'desc' },
-    include: { client: true, items: true }
-  });
-  res.json({ invoices });
-});
-
-invoicesRouter.get('/:id', async (req, res, next) => {
+// GET /api/invoices
+router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const id = z.string().uuid().parse(req.params.id);
-    const invoice = await prisma.invoice.findFirst({
-      where: { id, userId: req.user.id },
-      include: { client: true, items: true }
+    const invoices = await prisma.invoice.findMany({
+      where: { userId: req.user.id },
+      include: { items: true, client: true },
+      orderBy: { createdAt: 'desc' }
     });
-    if (!invoice) return res.status(404).json({ error: 'Not found' });
-    res.json({ invoice });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    next(e);
+    res.json({ invoices });
+  } catch (err) {
+    next(err);
   }
 });
 
-invoicesRouter.post('/', async (req, res, next) => {
+// GET /api/invoices/:id
+router.get('/:id', requireAuth, async (req, res, next) => {
   try {
-    const parsed = createInvoiceSchema.parse(req.body);
-
-    const client = await prisma.client.findFirst({ where: { id: parsed.clientId, userId: req.user.id } });
-    if (!client) return res.status(400).json({ error: 'Invalid clientId' });
-
-    const computedItems = parsed.items.map(it => {
-      const subtotal = Number((it.qty * it.price).toFixed(2));
-      return { ...it, subtotal };
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: req.params.id, userId: req.user.id },
+      include: { items: true, client: true }
     });
-    const total = Number(computedItems.reduce((sum, it) => sum + it.subtotal, 0).toFixed(2));
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    res.json({ invoice });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/invoices
+router.post('/', requireAuth, async (req, res, next) => {
+  try {
+    const { clientId, number, dueDate, notes, items } = InvoiceSchema.parse(req.body);
+
+    // Verify client belongs to user
+    const client = await prisma.client.findFirst({
+      where: { id: clientId, userId: req.user.id }
+    });
+
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    // Check invoice number uniqueness
+    const existing = await prisma.invoice.findFirst({
+      where: { userId: req.user.id, number }
+    });
+
+    if (existing) {
+      return res.status(409).json({ error: 'Invoice number already exists' });
+    }
+
+    // Calculate total
+    const total = items.reduce((sum, item) => sum + (item.qty * item.price), 0);
 
     const invoice = await prisma.invoice.create({
       data: {
         userId: req.user.id,
-        clientId: parsed.clientId,
-        number: parsed.number,
-        dueDate: parseDueDate(parsed.dueDate),
-        notes: parsed.notes || null,
-        total,
+        clientId,
+        number,
+        dueDate: new Date(dueDate),
+        notes: notes || '',
+        total: new Decimal(total.toFixed(2)),
         items: {
-          create: computedItems.map(it => ({
-            description: it.description,
-            qty: it.qty,
-            price: it.price,
-            subtotal: it.subtotal
+          create: items.map(item => ({
+            description: item.description,
+            qty: item.qty,
+            price: new Decimal(item.price.toFixed(2)),
+            subtotal: new Decimal((item.qty * item.price).toFixed(2))
           }))
         }
       },
-      include: { items: true, client: true }
+      include: { items: true }
     });
 
     res.status(201).json({ invoice });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    if (e?.code === 'P2002') return res.status(409).json({ error: 'Invoice number already exists' });
-    next(e);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', issues: err.issues });
+    }
+    next(err);
   }
 });
 
-invoicesRouter.patch('/:id/status', async (req, res, next) => {
+// PATCH /api/invoices/:id/status
+router.patch('/:id/status', requireAuth, async (req, res, next) => {
   try {
-    const id = z.string().uuid().parse(req.params.id);
-    const status = z.enum(['pending', 'paid', 'overdue']).parse(req.body?.status);
+    const { status } = z.object({ status: z.enum(['pending', 'paid', 'overdue']) }).parse(req.body);
 
-    const data = { status };
-    if (status === 'paid') data.paidAt = new Date();
-
-    const invoice = await prisma.invoice.update({
-      where: { id, userId: req.user.id },
-      data,
-      include: { items: true, client: true }
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
     });
 
-    res.json({ invoice });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    if (e?.code === 'P2025') return res.status(404).json({ error: 'Not found' });
-    next(e);
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id: req.params.id },
+      data: {
+        status,
+        paidAt: status === 'paid' ? new Date() : null
+      },
+      include: { items: true }
+    });
+
+    res.json({ invoice: updated });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input' });
+    }
+    next(err);
   }
 });
 
-invoicesRouter.delete('/:id', async (req, res, next) => {
+// DELETE /api/invoices/:id
+router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const id = z.string().uuid().parse(req.params.id);
-    await prisma.invoice.delete({ where: { id, userId: req.user.id } });
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    await prisma.invoice.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    if (e?.code === 'P2025') return res.status(404).json({ error: 'Not found' });
-    next(e);
+  } catch (err) {
+    next(err);
   }
 });
+
+export const invoicesRouter = router;

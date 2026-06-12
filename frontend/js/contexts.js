@@ -35,12 +35,27 @@ window.useTheme = function() { return useContext(ThemeCtx); };
 window.AppCtx = createContext();
 
 window.AppProvider = function(props) {
-    var _s = useState(function() {
-        var saved = window.Storage.load();
-        return saved || { user: null, clients: [], invoices: [], settings: {} };
-    });
-    var state = _s[0], setState = _s[1];
+    /* ---- Auth State ---- */
+    var _u = useState(null);
+    var user = _u[0], setUser = _u[1];
 
+    var _auth = useState(false);
+    var isAuthenticated = _auth[0], setIsAuthenticated = _auth[1];
+
+    var _loading = useState(true);
+    var isLoading = _loading[0], setIsLoading = _loading[1];
+
+    /* ---- App Data ---- */
+    var _c = useState([]);
+    var clients = _c[0], setClients = _c[1];
+
+    var _i = useState([]);
+    var invoices = _i[0], setInvoices = _i[1];
+
+    var _s = useState({});
+    var settings = _s[0], setSettings = _s[1];
+
+    /* ---- UI State ---- */
     var _sec = useState('landing');
     var section = _sec[0], setSection = _sec[1];
 
@@ -50,14 +65,50 @@ window.AppProvider = function(props) {
     var _t = useState(null);
     var toast = _t[0], setToast = _t[1];
 
-    var _ses = useState({ token: null, expiry: null });
-    var session = _ses[0], setSession = _ses[1];
+    var _authCheckDone = useState(false);
+    var authCheckDone = _authCheckDone[0], setAuthCheckDone = _authCheckDone[1];
 
-    var timerRef = useRef(null);
+    /* ---- Boot Sequence: Check /api/auth/me on mount ---- */
+    useEffect(function() {
+        var bootApp = async function() {
+            try {
+                var res = await Backend.me();
+                setUser(res.user);
+                setSettings(res.settings || {});
+                setIsAuthenticated(true);
 
-    var persist = useCallback(function(s) {
-        setState(s);
-        window.Storage.save(s);
+                /* Load user data after auth confirmed */
+                try {
+                    var clientsRes = await Backend.getClients();
+                    setClients(clientsRes.clients || []);
+                } catch (err) {
+                    console.error('Failed to load clients:', err);
+                }
+
+                try {
+                    var invoicesRes = await Backend.getInvoices();
+                    setInvoices(invoicesRes.invoices || []);
+                } catch (err) {
+                    console.error('Failed to load invoices:', err);
+                }
+
+                setSection('dashboard');
+            } catch (err) {
+                /* Auth failed — user not logged in */
+                setUser(null);
+                setIsAuthenticated(false);
+                setClients([]);
+                setInvoices([]);
+                setSettings({});
+                setSection('landing');
+            } finally {
+                /* Auth check is complete — allow UI to render */
+                setAuthCheckDone(true);
+                setIsLoading(false);
+            }
+        };
+
+        bootApp();
     }, []);
 
     var showToast = useCallback(function(message, type) {
@@ -65,55 +116,73 @@ window.AppProvider = function(props) {
         setTimeout(function() { setToast(null); }, 4000);
     }, []);
 
-    var createSession = useCallback(function() {
-        var token = Security.csrfToken();
-        var expiry = Date.now() + 30 * 60 * 1000;
-        setSession({ token: token, expiry: expiry });
-        return token;
+    var login = useCallback(async function(email, password) {
+        try {
+            var res = await Backend.login(email, password);
+            setUser(res.user);
+            setIsAuthenticated(true);
+
+            /* Load user data */
+            var clientsRes = await Backend.getClients();
+            setClients(clientsRes.clients || []);
+
+            var invoicesRes = await Backend.getInvoices();
+            setInvoices(invoicesRes.invoices || []);
+
+            var settingsRes = await Backend.getSettings();
+            setSettings(settingsRes.settings || {});
+
+            setSection('dashboard');
+            return true;
+        } catch (err) {
+            showToast(err.message || 'Login failed', 'error');
+            return false;
+        }
+    }, [showToast]);
+
+    var signup = useCallback(async function(name, email, password, businessName) {
+        try {
+            var res = await Backend.signup(name, email, password, businessName);
+            setUser(res.user);
+            setIsAuthenticated(true);
+            setClients([]);
+            setInvoices([]);
+            setSettings({});
+            setSection('dashboard');
+            return true;
+        } catch (err) {
+            showToast(err.message || 'Signup failed', 'error');
+            return false;
+        }
+    }, [showToast]);
+
+    var logout = useCallback(async function() {
+        try {
+            await Backend.logout();
+        } catch (err) {
+            console.error('Logout error:', err);
+        } finally {
+            /* Complete state clear */
+            setUser(null);
+            setIsAuthenticated(false);
+            setClients([]);
+            setInvoices([]);
+            setSettings({});
+            setSection('landing');
+            setDashTab('overview');
+            showToast('Logged out successfully', 'success');
+        }
+    }, [showToast]);
+
+    var setState = useCallback(function(newState) {
+        if (newState.user !== undefined) setUser(newState.user);
+        if (newState.clients !== undefined) setClients(newState.clients);
+        if (newState.invoices !== undefined) setInvoices(newState.invoices);
+        if (newState.settings !== undefined) setSettings(newState.settings);
     }, []);
-
-    var destroySession = useCallback(function() {
-        setSession({ token: null, expiry: null });
-    }, []);
-
-    var refreshSession = useCallback(function() {
-        setSession(function(s) {
-            return s.token ? { token: s.token, expiry: Date.now() + 30 * 60 * 1000 } : s;
-        });
-    }, []);
-
-    var isValidSession = useCallback(function() {
-        return session.token && Date.now() < session.expiry;
-    }, [session]);
-
-    // Refresh session on user activity
-    useEffect(function() {
-        var handler = function() { refreshSession(); };
-        document.addEventListener('click', handler);
-        document.addEventListener('keypress', handler);
-        return function() {
-            document.removeEventListener('click', handler);
-            document.removeEventListener('keypress', handler);
-        };
-    }, [refreshSession]);
-
-    // Auto-logout on session expiry
-    useEffect(function() {
-        if (timerRef.current) clearInterval(timerRef.current);
-        if (!session.token) return;
-        timerRef.current = setInterval(function() {
-            if (Date.now() >= session.expiry) {
-                destroySession();
-                persist({ user: null, clients: [], invoices: [], settings: {} });
-                setSection('landing');
-                showToast('Session expired. Please login again.', 'warning');
-            }
-        }, 1000);
-        return function() { clearInterval(timerRef.current); };
-    }, [session, destroySession, persist, showToast]);
 
     var navigate = useCallback(function(sec, tab) {
-        if (sec === 'dashboard' && !session.token) {
+        if (sec === 'dashboard' && !isAuthenticated) {
             setSection('login');
             showToast('Please login to continue', 'warning');
             return;
@@ -121,19 +190,29 @@ window.AppProvider = function(props) {
         setSection(sec);
         if (tab) setDashTab(tab);
         if (sec === 'landing') window.scrollTo(0, 0);
-    }, [session, showToast]);
+    }, [isAuthenticated, showToast]);
 
     var value = useMemo(function() {
         return {
-            user: state.user, clients: state.clients, invoices: state.invoices, settings: state.settings,
-            setState: persist, section: section, setSection: navigate,
-            dashTab: dashTab, setDashTab: setDashTab,
-            toast: toast, showToast: showToast,
-            session: session, createSession: createSession,
-            destroySession: destroySession, isValidSession: isValidSession,
-            refreshSession: refreshSession
+            user: user,
+            clients: clients,
+            invoices: invoices,
+            settings: settings,
+            isAuthenticated: isAuthenticated,
+            isLoading: isLoading,
+            authCheckDone: authCheckDone,
+            setState: setState,
+            section: section,
+            setSection: navigate,
+            dashTab: dashTab,
+            setDashTab: setDashTab,
+            toast: toast,
+            showToast: showToast,
+            login: login,
+            signup: signup,
+            logout: logout
         };
-    }, [state, persist, section, navigate, dashTab, toast, showToast, session, createSession, destroySession, isValidSession, refreshSession]);
+    }, [user, clients, invoices, settings, isAuthenticated, isLoading, authCheckDone, setState, section, navigate, dashTab, toast, showToast, login, signup, logout]);
 
     return React.createElement(AppCtx.Provider, { value: value }, props.children);
 };

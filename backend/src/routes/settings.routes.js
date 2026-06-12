@@ -3,39 +3,66 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 
-export const settingsRouter = Router();
-settingsRouter.use(requireAuth);
+const router = Router();
 
-const updateSettingsSchema = z.object({
-  address: z.string().trim().max(300).optional().nullable(),
-  paymentTerms: z.number().int().min(1).max(365).optional()
+const SettingsSchema = z.object({
+  address: z.string().max(500).optional(),
+  paymentTerms: z.number().int().min(0).max(365).optional()
 });
 
-settingsRouter.get('/', async (req, res) => {
-  const settings = await prisma.settings.findUnique({ where: { userId: req.user.id } });
-  res.json({ settings });
-});
-
-settingsRouter.put('/', async (req, res, next) => {
+// GET /api/settings
+router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const parsed = updateSettingsSchema.parse(req.body);
-
-    const settings = await prisma.settings.upsert({
-      where: { userId: req.user.id },
-      create: {
-        userId: req.user.id,
-        address: parsed.address || '',
-        paymentTerms: parsed.paymentTerms ?? 30
-      },
-      update: {
-        ...(parsed.address !== undefined ? { address: parsed.address || '' } : {}),
-        ...(parsed.paymentTerms !== undefined ? { paymentTerms: parsed.paymentTerms } : {})
-      }
+    let settings = await prisma.settings.findUnique({
+      where: { userId: req.user.id }
     });
 
+    if (!settings) {
+      settings = await prisma.settings.create({
+        data: {
+          userId: req.user.id,
+          address: '',
+          paymentTerms: 30
+        }
+      });
+    }
+
     res.json({ settings });
-  } catch (e) {
-    if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
-    next(e);
+  } catch (err) {
+    next(err);
   }
 });
+
+// PUT /api/settings
+router.put('/', requireAuth, async (req, res, next) => {
+  try {
+    const data = SettingsSchema.parse(req.body);
+
+    let settings = await prisma.settings.findUnique({
+      where: { userId: req.user.id }
+    });
+
+    if (!settings) {
+      settings = await prisma.settings.create({
+        data: {
+          userId: req.user.id,
+          ...data
+        }
+      });
+    } else {
+      settings = await prisma.settings.update({
+        where: { userId: req.user.id },
+        data
+      });
+    }
+
+    res.json({ settings });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input' });
+    }
+    next(err);
+  }
+});
+
+export const settingsRouter = router;
