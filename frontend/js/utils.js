@@ -1,5 +1,5 @@
 /* ================================================================== */
-/*  utils.js — Security, Storage, Formatting, PDF utilities           */
+/*  utils.js — Security, Formatting, PDF utilities                    */
 /* ================================================================== */
 
 /* ---------- Security ---------- */
@@ -96,22 +96,6 @@ window.Security = {
         remaining: function(k) {
             if (!this.attempts[k]) return 0;
             return Math.max(0, Math.ceil((this.windowMs - (Date.now() - this.attempts[k].first)) / 1000));
-        }
-    }
-};
-
-/* ---------- Storage ---------- */
-window.Storage = {
-    save: function(data) {
-        try { localStorage.setItem('invoiceFlowData', btoa(JSON.stringify(data))); } catch (e) { }
-    },
-    load: function() {
-        try {
-            var s = localStorage.getItem('invoiceFlowData');
-            return s ? JSON.parse(atob(s)) : null;
-        } catch (e) {
-            localStorage.removeItem('invoiceFlowData');
-            return null;
         }
     }
 };

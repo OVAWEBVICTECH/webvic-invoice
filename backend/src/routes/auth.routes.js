@@ -47,7 +47,7 @@ authRouter.post('/signup', async (req, res, next) => {
     const token = signSession(user);
     setSessionCookie(res, token);
 
-    res.status(201).json({ user });
+    res.status(201).json({ user, token });
   } catch (e) {
     if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
     next(e);
@@ -67,7 +67,7 @@ authRouter.post('/login', async (req, res, next) => {
     const token = signSession({ id: user.id, email: user.email });
     setSessionCookie(res, token);
 
-    res.json({ user: { id: user.id, email: user.email, name: user.name, businessName: user.businessName } });
+    res.json({ user: { id: user.id, email: user.email, name: user.name, businessName: user.businessName }, token });
   } catch (e) {
     if (e?.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
     next(e);
@@ -84,7 +84,9 @@ authRouter.get('/me', requireAuth, async (req, res) => {
     where: { id: req.user.id },
     select: { id: true, email: true, name: true, businessName: true, createdAt: true }
   });
-  res.json({ user });
+  const token = signSession(user);
+  setSessionCookie(res, token);
+  res.json({ user, token });
 });
 
 const profileSchema = z.object({

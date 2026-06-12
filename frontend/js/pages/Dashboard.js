@@ -26,15 +26,16 @@ window.DashboardPage = function() {
     var _cc = React.useState(''); var cc = _cc[0], setCc = _cc[1];
     var _cp = React.useState(''); var cp = _cp[0], setCp = _cp[1];
 
-    var addClient = function(e) {
+    var addClient = async function(e) {
         e.preventDefault();
         var nm = Security.sanitize(cn.trim()), em = Security.sanitize(ce.trim().toLowerCase()), co = Security.sanitize(cc.trim()), ph = Security.sanitize(cp.trim());
         if (!Security.validEmail(em)) { app.showToast('Please enter a valid email', 'error'); return; }
-        if (app.clients.some(function(c) { return c.email === em; })) { app.showToast('Client with this email exists', 'error'); return; }
-        var client = { id: Security.secureId('client'), name: nm, email: em, company: co, phone: ph, createdAt: new Date().toISOString() };
-        app.setState({ user: app.user, clients: app.clients.concat([client]), invoices: app.invoices, settings: app.settings });
-        setCn(''); setCe(''); setCc(''); setCp(''); setClientModal(false);
-        app.showToast('Client added!', 'success');
+        try {
+            var res = await Backend.clients.create({ name: nm, email: em, company: co || null, phone: ph || null });
+            app.setState({ user: app.user, clients: app.clients.concat([res.client]), invoices: app.invoices, settings: app.settings });
+            setCn(''); setCe(''); setCc(''); setCp(''); setClientModal(false);
+            app.showToast('Client added!', 'success');
+        } catch (err) { app.showToast(err.message || 'Client could not be saved', 'error'); }
     };
 
     /* ---- Invoice Creation State ---- */
@@ -50,28 +51,34 @@ window.DashboardPage = function() {
     var removeItem = function(i) { if (items.length > 1) setItems(items.filter(function(_, idx) { return idx !== i; })); };
     var selClient = app.clients.find(function(c) { return c.id === invClient; });
 
-    var createInvoice = function(e) {
+    var createInvoice = async function(e) {
         e.preventDefault();
         if (!invClient) { app.showToast('Please select a client', 'error'); return; }
-        var cl = app.clients.find(function(c) { return c.id === invClient; });
-        if (!cl) return;
-        var validItems = items.filter(function(it) { return it.desc && it.qty > 0 && it.price > 0; }).map(function(it) { return { desc: it.desc, qty: it.qty, price: it.price, subtotal: it.qty * it.price }; });
+        var validItems = items.filter(function(it) { return it.desc && it.qty > 0 && it.price > 0; }).map(function(it) { return { description: Security.sanitize(it.desc), qty: it.qty, price: it.price }; });
         if (!validItems.length) { app.showToast('Add at least one valid item', 'error'); return; }
-        var inv = { id: Security.secureId('inv'), number: invNum, clientId: invClient, clientName: cl.name, clientEmail: cl.email, items: validItems, total: validItems.reduce(function(s, i) { return s + i.subtotal; }, 0), notes: Security.sanitize(notes), dueDate: dueDate, status: 'pending', createdAt: new Date().toISOString() };
-        app.setState({ user: app.user, clients: app.clients, invoices: app.invoices.concat([inv]), settings: app.settings });
-        setItems([{ desc: '', qty: 1, price: 0 }]); setNotes(''); setInvClient('');
-        app.setDashTab('invoices'); app.showToast('Invoice created!', 'success');
+        try {
+            var res = await Backend.invoices.create({ number: invNum, clientId: invClient, dueDate: dueDate, notes: Security.sanitize(notes), items: validItems });
+            app.setState({ user: app.user, clients: app.clients, invoices: app.invoices.concat([res.invoice]), settings: app.settings });
+            setItems([{ desc: '', qty: 1, price: 0 }]); setNotes(''); setInvClient('');
+            app.setDashTab('invoices'); app.showToast('Invoice created!', 'success');
+        } catch (err) { app.showToast(err.message || 'Invoice could not be saved', 'error'); }
     };
 
     /* ---- Invoice Actions ---- */
-    var markPaid = function(id) {
-        app.setState({ user: app.user, clients: app.clients, invoices: app.invoices.map(function(i) { return i.id === id ? Object.assign({}, i, { status: 'paid', paidAt: new Date().toISOString() }) : i; }), settings: app.settings });
-        app.showToast('Marked as paid!', 'success');
+    var markPaid = async function(id) {
+        try {
+            var res = await Backend.invoices.markPaid(id);
+            app.setState({ user: app.user, clients: app.clients, invoices: app.invoices.map(function(i) { return i.id === id ? res.invoice : i; }), settings: app.settings });
+            app.showToast('Marked as paid!', 'success');
+        } catch (err) { app.showToast(err.message || 'Invoice could not be updated', 'error'); }
     };
-    var deleteInv = function(id) {
+    var deleteInv = async function(id) {
         if (!confirm('Delete this invoice?')) return;
-        app.setState({ user: app.user, clients: app.clients, invoices: app.invoices.filter(function(i) { return i.id !== id; }), settings: app.settings });
-        app.showToast('Invoice deleted', 'success');
+        try {
+            await Backend.invoices.delete(id);
+            app.setState({ user: app.user, clients: app.clients, invoices: app.invoices.filter(function(i) { return i.id !== id; }), settings: app.settings });
+            app.showToast('Invoice deleted', 'success');
+        } catch (err) { app.showToast(err.message || 'Invoice could not be deleted', 'error'); }
     };
     var downloadPdf = async function(id) {
         var inv = app.invoices.find(function(i) { return i.id === id; });
@@ -84,10 +91,17 @@ window.DashboardPage = function() {
     var _sb = React.useState(app.settings.business || ''); var sBiz = _sb[0], setSBiz = _sb[1];
     var _sa = React.useState(app.settings.address || ''); var sAddr = _sa[0], setSAddr = _sa[1];
     var _st = React.useState(app.settings.paymentTerms || 30); var sTerms = _st[0], setSTerms = _st[1];
-    var saveSettings = function(e) {
+    var saveSettings = async function(e) {
         e.preventDefault();
-        app.setState({ user: app.user, clients: app.clients, invoices: app.invoices, settings: Object.assign({}, app.settings, { business: Security.sanitize(sBiz), address: Security.sanitize(sAddr), paymentTerms: Number(sTerms) }) });
-        app.showToast('Settings saved!', 'success');
+        try {
+            var business = Security.sanitize(sBiz) || app.user.name;
+            var settingsRes = await Backend.settings.update({ address: Security.sanitize(sAddr), paymentTerms: Number(sTerms) });
+            var profileRes = await Backend.auth.profile({ businessName: business });
+            var nextUser = Object.assign({}, app.user, profileRes.user, { business: profileRes.user.businessName || business });
+            var nextSettings = Object.assign({}, settingsRes.settings, { business: nextUser.business, email: nextUser.email });
+            app.setState({ user: nextUser, clients: app.clients, invoices: app.invoices, settings: nextSettings });
+            app.showToast('Settings saved!', 'success');
+        } catch (err) { app.showToast(err.message || 'Settings could not be saved', 'error'); }
     };
 
     /* ---- Session Timer ---- */
@@ -346,7 +360,7 @@ window.DashboardPage = function() {
                             <button className="gradient-bg text-white px-4 py-2 rounded-lg font-medium hover:opacity-90 transition">Upgrade</button>
                         </div>
                     </div>
-                    <button onClick={function() { app.destroySession(); app.setState({ user: null, clients: [], invoices: [], settings: {} }); app.setSection('landing'); app.showToast('Logged out successfully', 'success'); }} className="mt-6 w-full py-3 border-2 border-red-500 text-red-500 rounded-lg font-semibold hover:bg-red-50 dark:hover:bg-red-900/30 transition flex items-center justify-center"><i className="fas fa-sign-out-alt mr-2"></i>Logout</button>
+                    <button onClick={async function() { await app.logout(); app.showToast('Logged out successfully', 'success'); }} className="mt-6 w-full py-3 border-2 border-red-500 text-red-500 rounded-lg font-semibold hover:bg-red-50 dark:hover:bg-red-900/30 transition flex items-center justify-center"><i className="fas fa-sign-out-alt mr-2"></i>Logout</button>
                 </div>}
 
             </main>

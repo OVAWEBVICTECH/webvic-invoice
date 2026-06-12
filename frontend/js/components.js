@@ -72,10 +72,8 @@ window.Navbar = function() {
     var mobileLandingLinks = [['star', 'Features'], ['palette', 'Templates'], ['tag', 'Pricing'], ['blog', 'Blog'], ['info-circle', 'About'], ['envelope', 'Contact']];
     var mobileDashLinks = [['home', 'overview', 'Dashboard'], ['file-invoice', 'invoices', 'Invoices'], ['users', 'clients', 'Clients'], ['plus-circle', 'create', 'Create'], ['cog', 'settings', 'Settings']];
 
-    var handleLogout = function() {
-        app.destroySession();
-        app.setState({ user: null, clients: [], invoices: [], settings: {} });
-        app.setSection('landing');
+    var handleLogout = async function() {
+        await app.logout();
         app.showToast('Logged out successfully', 'success');
         setMobile(false);
     };

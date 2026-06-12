@@ -14,7 +14,7 @@ export function signSession(user) {
   return jwt.sign(
     { sub: user.id, email: user.email },
     getSecret(),
-    { expiresIn: '30m' }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '30m' }
   );
 }
 
@@ -22,21 +22,33 @@ export function verifySession(token) {
   return jwt.verify(token, getSecret());
 }
 
+export function getSessionToken(req) {
+  const auth = req.get('authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : req.cookies?.[COOKIE_NAME];
+}
+
 export function getSessionCookie(req) {
   return req.cookies?.[COOKIE_NAME];
 }
 
-export function setSessionCookie(res, token) {
+function cookieOptions() {
   const secure = String(process.env.COOKIE_SECURE || '') === 'true' || process.env.NODE_ENV === 'production';
-  res.cookie(COOKIE_NAME, token, {
+  return {
     httpOnly: true,
     secure,
-    sameSite: 'lax',
+    sameSite: process.env.COOKIE_SAME_SITE || (secure ? 'none' : 'lax'),
     path: '/',
     maxAge: 30 * 60 * 1000
-  });
+  };
+}
+
+export function setSessionCookie(res, token) {
+  res.cookie(COOKIE_NAME, token, cookieOptions());
 }
 
 export function clearSessionCookie(res) {
-  res.clearCookie(COOKIE_NAME, { path: '/' });
+  const options = cookieOptions();
+  delete options.maxAge;
+  res.clearCookie(COOKIE_NAME, options);
 }
